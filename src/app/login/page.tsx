@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { Suspense, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
-export default function MerchantLoginPage() {
+function MerchantLoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -18,19 +19,27 @@ export default function MerchantLoginPage() {
     event.preventDefault();
     setError("");
     setLoading(true);
+
     try {
       const supabase = createClient();
+
       const { error: signInError } = await supabase.auth.signInWithPassword({
         email: email.trim().toLowerCase(),
         password,
       });
-      if (signInError) throw signInError;
+
+      if (signInError) {
+        throw signInError;
+      }
 
       const next = searchParams.get("next");
+
+      // Hindari redirect ke URL eksternal.
       const safeNext =
         next && next.startsWith("/") && !next.startsWith("//")
           ? next
           : "/dashboard";
+
       router.replace(safeNext);
       router.refresh();
     } catch (err) {
@@ -53,10 +62,13 @@ export default function MerchantLoginPage() {
         <Link href="/" className="text-2xl font-bold tracking-tight">
           Urban<span className="text-[#14E1E6]">Sport</span>
         </Link>
+
         <p className="mt-7 text-sm font-semibold uppercase tracking-[0.25em] text-[#14E1E6]">
           Merchant Portal
         </p>
+
         <h1 className="mt-3 text-3xl font-bold">Masuk ke akun</h1>
+
         <p className="mt-2 text-sm leading-6 text-slate-400">
           Masuk ke UrbanSport Merchant untuk mengelola bisnis, produk, stok, dan
           pesanan Anda.
@@ -69,33 +81,36 @@ export default function MerchantLoginPage() {
               className={inputClass}
               type="email"
               value={email}
-              onChange={(e) => setEmail(e.target.value)}
+              onChange={(event) => setEmail(event.target.value)}
               placeholder="nama@bisnis.com"
               autoComplete="email"
               required
             />
           </label>
+
           <label className="block text-sm font-medium text-slate-200">
             Password
             <input
               className={inputClass}
               type={showPassword ? "text" : "password"}
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
+              onChange={(event) => setPassword(event.target.value)}
               placeholder="Masukkan password"
               autoComplete="current-password"
               required
             />
           </label>
+
           <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-400">
             <input
               type="checkbox"
               checked={showPassword}
-              onChange={(e) => setShowPassword(e.target.checked)}
+              onChange={(event) => setShowPassword(event.target.checked)}
               className="accent-[#14E1E6]"
-            />{" "}
+            />
             Tampilkan password
           </label>
+
           {error && (
             <p
               role="alert"
@@ -104,6 +119,7 @@ export default function MerchantLoginPage() {
               {error}
             </p>
           )}
+
           <button
             type="submit"
             disabled={loading}
@@ -112,6 +128,7 @@ export default function MerchantLoginPage() {
             {loading ? "Memproses..." : "Masuk"}
           </button>
         </form>
+
         <p className="mt-6 text-center text-sm text-slate-400">
           Belum punya akun merchant?{" "}
           <Link
@@ -123,5 +140,19 @@ export default function MerchantLoginPage() {
         </p>
       </section>
     </main>
+  );
+}
+
+export default function MerchantLoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-[#101416] text-white">
+          <p className="text-sm text-slate-400">Memuat halaman login...</p>
+        </main>
+      }
+    >
+      <MerchantLoginForm />
+    </Suspense>
   );
 }

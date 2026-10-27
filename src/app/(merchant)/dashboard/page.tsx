@@ -1,25 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   ArrowDownRight,
   ArrowRight,
   ArrowUpRight,
+  Building2,
   CircleAlert,
   Package,
+  RefreshCw,
   ShoppingBag,
   Wallet,
-  Building2,
-  RefreshCw,
+  MapPin,
+  Phone,
 } from "lucide-react";
 
 import { PageHeading } from "@/components/ui";
 import { demoProducts, discountedPrice, rupiah } from "@/lib/demo-products";
-import {
-  getMerchantProfile,
-  type MerchantMeResponse,
-} from "@/lib/merchant.service";
+import { getMerchantStores, type MerchantStore } from "@/lib/merchant.service";
 
 const stats = [
   {
@@ -61,37 +60,38 @@ const stats = [
 ];
 
 export default function DashboardPage() {
-  const [merchantData, setMerchantData] = useState<
-    MerchantMeResponse["data"] | null
-  >(null);
-
+  const [stores, setStores] = useState<MerchantStore[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const lowStock = demoProducts.filter((product) => product.stock <= 5);
 
-  async function loadMerchant() {
+  const loadMerchantStores = useCallback(async () => {
     setLoading(true);
     setError("");
 
     try {
-      const response = await getMerchantProfile();
-      setMerchantData(response.data);
+      const response = await getMerchantStores();
+
+      if (!response || !Array.isArray(response.data)) {
+        throw new Error("Format data toko dari backend tidak sesuai.");
+      }
+
+      setStores(response.data);
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Gagal mengambil data merchant.",
+        err instanceof Error
+          ? err.message
+          : "Gagal mengambil data toko merchant.",
       );
     } finally {
       setLoading(false);
     }
-  }
-
-  useEffect(() => {
-    void loadMerchant();
   }, []);
 
-  const profile = merchantData?.profile;
-  const venues = merchantData?.venues ?? [];
+  useEffect(() => {
+    void loadMerchantStores();
+  }, [loadMerchantStores]);
 
   return (
     <div>
@@ -109,38 +109,34 @@ export default function DashboardPage() {
         }
       />
 
-      {/* Profil merchant dari backend */}
+      {/* Toko merchant dari backend */}
       <section className="mb-6 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-3">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-cyan-300/10 text-cyan-300">
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-cyan-300/10 text-cyan-300">
               <Building2 size={23} />
             </div>
 
-            <div>
+            <div className="min-w-0">
               <p className="text-xs text-gray-500">Akun Merchant</p>
 
               <h2 className="mt-1 text-lg font-bold">
-                {loading
-                  ? "Memuat profil..."
-                  : profile?.full_name || "Nama belum tersedia"}
+                {loading ? "Memuat toko..." : "Toko Saya"}
               </h2>
 
-              {profile?.phone && (
-                <p className="mt-1 text-sm text-gray-400">{profile.phone}</p>
-              )}
-
               <p className="mt-2 text-xs text-gray-500">
-                {venues.length} venue terhubung
+                {loading
+                  ? "Mengambil data dari backend..."
+                  : `${stores.length} toko terhubung`}
               </p>
             </div>
           </div>
 
           <button
             type="button"
-            onClick={() => void loadMerchant()}
+            onClick={() => void loadMerchantStores()}
             disabled={loading}
-            className="flex items-center gap-2 rounded-xl border border-[var(--border)] px-3 py-2 text-sm text-gray-300 hover:bg-white/5 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-xl border border-[var(--border)] px-3 py-2 text-sm text-gray-300 hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <RefreshCw size={15} className={loading ? "animate-spin" : ""} />
             Refresh
@@ -150,14 +146,16 @@ export default function DashboardPage() {
         {error && (
           <div className="mt-4 rounded-xl border border-red-400/20 bg-red-400/10 p-4">
             <p className="text-sm font-semibold text-red-300">
-              Gagal memuat data merchant
+              Gagal memuat data toko
             </p>
+
             <p className="mt-1 break-words text-xs leading-5 text-red-200/80">
               {error}
             </p>
+
             <button
               type="button"
-              onClick={() => void loadMerchant()}
+              onClick={() => void loadMerchantStores()}
               className="mt-3 text-sm font-semibold text-red-300 underline"
             >
               Coba lagi
@@ -166,7 +164,7 @@ export default function DashboardPage() {
         )}
       </section>
 
-      {/* Statistik */}
+      {/* Statistik dashboard */}
       <div className="mb-7 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {stats.map(({ label, value, note, icon: Icon, color, bg, up }) => (
           <div
@@ -175,6 +173,7 @@ export default function DashboardPage() {
           >
             <div className="mb-5 flex items-center justify-between">
               <p className="text-sm text-gray-400">{label}</p>
+
               <span className={`rounded-xl p-2.5 ${bg} ${color}`}>
                 <Icon size={19} />
               </span>
@@ -194,13 +193,13 @@ export default function DashboardPage() {
         ))}
       </div>
 
-      {/* Venue dari backend */}
+      {/* Daftar toko dari backend */}
       <section className="mb-7 rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
         <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
           <div>
-            <h2 className="font-semibold">Venue Saya</h2>
+            <h2 className="font-semibold">Toko Saya</h2>
             <p className="mt-1 text-xs text-gray-500">
-              Data venue dari backend UrbanSport
+              Data toko dari backend UrbanSport
             </p>
           </div>
 
@@ -209,72 +208,39 @@ export default function DashboardPage() {
 
         <div className="p-5">
           {loading ? (
-            <p className="text-sm text-gray-400">Memuat daftar venue...</p>
+            <div className="flex items-center gap-2 text-sm text-gray-400">
+              <RefreshCw size={16} className="animate-spin" />
+              Memuat daftar toko...
+            </div>
           ) : error ? (
             <p className="text-sm text-gray-400">
-              Venue belum dapat dimuat. Periksa koneksi API dan sesi login.
+              Daftar toko belum dapat dimuat. Periksa koneksi API dan sesi login
+              merchant.
             </p>
-          ) : venues.length === 0 ? (
+          ) : stores.length === 0 ? (
             <div className="rounded-xl border border-dashed border-[var(--border)] p-6 text-center">
               <Building2 size={28} className="mx-auto text-gray-500" />
+
               <p className="mt-3 text-sm font-semibold">
-                Belum ada venue terhubung
+                Belum ada toko terhubung
               </p>
+
               <p className="mt-1 text-xs leading-5 text-gray-500">
-                Pastikan akun merchant sudah memiliki relasi venue pada tabel
-                merchant_venues di database.
+                Pastikan akun yang login memiliki toko pada tabel proshop_stores
+                dan data kepemilikannya sesuai dengan user Supabase.
               </p>
             </div>
           ) : (
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              {venues.map((venue) => (
-                <article
-                  key={venue.id}
-                  className="rounded-xl border border-[var(--border)] bg-[#202020] p-4"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-300/10 text-cyan-300">
-                      <Building2 size={20} />
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <h3 className="break-words text-sm font-semibold">
-                        {venue.name || "Venue tanpa nama"}
-                      </h3>
-
-                      <p className="mt-1 text-xs text-gray-400">
-                        {venue.type || "Jenis venue belum tersedia"}
-                      </p>
-                    </div>
-                  </div>
-
-                  {venue.address && (
-                    <p className="mt-3 text-xs leading-5 text-gray-500">
-                      {venue.address}
-                    </p>
-                  )}
-
-                  <div className="mt-4 border-t border-[var(--border)] pt-3">
-                    <span
-                      className={`inline-flex rounded-full px-2.5 py-1 text-xs ${
-                        venue.status === true
-                          ? "bg-emerald-400/10 text-emerald-300"
-                          : "bg-gray-500/15 text-gray-400"
-                      }`}
-                    >
-                      {venue.status === true
-                        ? "Aktif"
-                        : "Status tidak aktif / belum diketahui"}
-                    </span>
-                  </div>
-                </article>
+              {stores.map((store) => (
+                <StoreCard key={store.id} store={store} />
               ))}
             </div>
           )}
         </div>
       </section>
 
-      {/* Produk demo yang sudah ada tetap dipertahankan */}
+      {/* Produk demo */}
       <div className="grid gap-5 xl:grid-cols-[1.5fr_1fr]">
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
           <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
@@ -299,7 +265,7 @@ export default function DashboardPage() {
                 key={product.id}
                 className="flex items-center gap-3 px-5 py-4"
               >
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#292929] text-xl">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[#292929] text-xl">
                   {product.sport === "GOLF"
                     ? "⛳"
                     : product.sport === "PADEL"
@@ -311,6 +277,7 @@ export default function DashboardPage() {
                   <p className="truncate text-sm font-semibold">
                     {product.name}
                   </p>
+
                   <p className="mt-1 text-xs text-gray-500">
                     {product.sku} · Stok {product.stock}
                   </p>
@@ -322,6 +289,7 @@ export default function DashboardPage() {
                       discountedPrice(product.price, product.discountPercent),
                     )}
                   </p>
+
                   <span className="mt-1 inline-block rounded-full bg-gray-500/15 px-2 py-1 text-[10px] text-gray-400">
                     {product.status}
                   </span>
@@ -331,22 +299,24 @@ export default function DashboardPage() {
           </div>
         </section>
 
+        {/* Peringatan stok demo */}
         <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)]">
           <div className="border-b border-[var(--border)] px-5 py-4">
             <h2 className="font-semibold">Perlu Perhatian</h2>
+
             <p className="mt-1 text-xs text-gray-500">
               Stok produk demo yang perlu dicek
             </p>
           </div>
 
           <div className="space-y-3 p-5">
-            {lowStock.length ? (
+            {lowStock.length > 0 ? (
               lowStock.map((product) => (
                 <div
                   key={product.id}
                   className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[#202020] p-3"
                 >
-                  <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-300/10 text-lg">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-amber-300/10 text-lg">
                     {product.sport === "GOLF"
                       ? "⛳"
                       : product.sport === "PADEL"
@@ -358,6 +328,7 @@ export default function DashboardPage() {
                     <p className="truncate text-sm font-medium">
                       {product.name}
                     </p>
+
                     <p className="mt-1 text-xs text-gray-500">
                       {product.stock === 0
                         ? "Stok habis"
@@ -377,6 +348,7 @@ export default function DashboardPage() {
 
           <div className="mx-5 mb-5 rounded-xl border border-dashed border-[var(--border)] p-4">
             <p className="text-sm font-semibold">Tips untuk merchant</p>
+
             <p className="mt-2 text-xs leading-5 text-gray-500">
               Gunakan foto yang jelas, nama produk yang spesifik, dan stok yang
               akurat agar katalog UrbanSport selalu terbarui.
@@ -386,9 +358,68 @@ export default function DashboardPage() {
       </div>
 
       <p className="mt-6 text-xs text-gray-600">
-        Profil dan venue berasal dari backend. Statistik transaksi dan produk
-        masih menggunakan data demo.
+        Daftar toko berasal dari backend. Statistik, pesanan, pendapatan, dan
+        produk pada dashboard ini masih menggunakan data demo.
       </p>
     </div>
+  );
+}
+
+function StoreCard({ store }: { store: MerchantStore }) {
+  return (
+    <article className="rounded-xl border border-[var(--border)] bg-[#202020] p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-cyan-300/10 text-cyan-300">
+          {store.logo_url ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={store.logo_url}
+              alt={`Logo ${store.name}`}
+              className="h-full w-full object-cover"
+            />
+          ) : (
+            <Building2 size={20} />
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <h3 className="break-words text-sm font-semibold">
+            {store.name || "Toko tanpa nama"}
+          </h3>
+
+          {store.description && (
+            <p className="mt-1 line-clamp-2 text-xs leading-5 text-gray-400">
+              {store.description}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {store.address && (
+        <p className="mt-3 flex items-start gap-2 text-xs leading-5 text-gray-500">
+          <MapPin size={14} className="mt-0.5 shrink-0" />
+          <span>{store.address}</span>
+        </p>
+      )}
+
+      {store.phone && (
+        <p className="mt-2 flex items-center gap-2 text-xs text-gray-500">
+          <Phone size={14} className="shrink-0" />
+          <span>{store.phone}</span>
+        </p>
+      )}
+
+      <div className="mt-4 border-t border-[var(--border)] pt-3">
+        <span
+          className={`inline-flex rounded-full px-2.5 py-1 text-xs ${
+            store.is_active
+              ? "bg-emerald-400/10 text-emerald-300"
+              : "bg-gray-500/15 text-gray-400"
+          }`}
+        >
+          {store.is_active ? "Aktif" : "Tidak aktif"}
+        </span>
+      </div>
+    </article>
   );
 }

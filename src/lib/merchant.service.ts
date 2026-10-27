@@ -19,11 +19,29 @@ export type MerchantProfile = {
   created_at: string | null;
 };
 
+export type MerchantStore = {
+  id: string;
+  name: string;
+  description: string | null;
+  logo_url: string | null;
+  phone: string | null;
+  whatsapp: string | null;
+  address: string | null;
+  is_active: boolean;
+  created_at: string;
+};
+
+export type MerchantStoresResponse = {
+  success: boolean;
+  data: MerchantStore[];
+};
+
 export type MerchantMeResponse = {
   success: boolean;
   data: {
-    profile: MerchantProfile;
+    profile: MerchantProfile | null;
     venues: MerchantVenue[];
+    stores: MerchantStore[];
   };
 };
 
@@ -70,13 +88,35 @@ async function apiRequest<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function getMerchantProfile() {
-  return apiRequest<MerchantMeResponse>("/merchant/me");
+/**
+ * Mengambil toko milik akun merchant dari backend Proshop.
+ * Backend mengembalikan { success: true, data: MerchantStore[] }.
+ */
+export function getMerchantStores() {
+  return apiRequest<MerchantStoresResponse>("/proshop/merchant/stores");
 }
 
+/**
+ * Alias untuk kompatibilitas dengan kode lama.
+ * Respons sekarang menggunakan toko Proshop, bukan profil/venue.
+ */
+export async function getMerchantProfile(): Promise<MerchantMeResponse> {
+  const response = await getMerchantStores();
+
+  return {
+    success: response.success,
+    data: {
+      profile: null,
+      venues: [],
+      stores: response.data ?? [],
+    },
+  };
+}
+
+/**
+ * Alias kompatibilitas: sebelumnya fungsi ini memanggil
+ * /merchant/venues. Sekarang mengambil toko Proshop merchant.
+ */
 export function getMerchantVenues() {
-  return apiRequest<{
-    success: boolean;
-    data: MerchantVenue[];
-  }>("/merchant/venues");
+  return getMerchantStores();
 }

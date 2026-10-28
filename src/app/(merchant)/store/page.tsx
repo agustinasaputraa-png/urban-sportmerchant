@@ -2,85 +2,98 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ImagePlus, LoaderCircle, Store, Trash2 } from "lucide-react";
+
 import { PageHeading } from "@/components/ui";
 import { createClient } from "@/lib/supabase/client";
+import {
+  getMerchantStores,
+  updateMerchantStore,
+  type MerchantStore,
+} from "@/lib/merchant.service";
 
 const BUCKET = "merchant-store-photos";
 const MAX_FILE_SIZE = 2 * 1024 * 1024;
 
 const inputClass =
-  "mt-2 w-full rounded-xl border border-[var(--border)] bg-[#202020] px-3.5 py-3 outline-none focus:border-[var(--accent)]";
+  "mt-2 w-full rounded-xl border border-[var(--border)] bg-[#202020] px-3.5 py-3 outline-none focus:border-[var(--accent)] disabled:opacity-50";
 
 export default function StorePage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [name, setName] = useState("Golf Pro Shop");
-  const [slug, setSlug] = useState("golf-pro-shop");
-  const [description, setDescription] = useState(
-    "Perlengkapan dan aksesori golf pilihan.",
-  );
+  const [store, setStore] = useState<MerchantStore | null>(null);
+
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [phone, setPhone] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [address, setAddress] = useState("");
+
   const [photoUrl, setPhotoUrl] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [removePhoto, setRemovePhoto] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState("");
+
   const [message, setMessage] = useState("");
+  const [messageType, setMessageType] = useState<"success" | "error">(
+    "success",
+  );
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     let active = true;
 
-    async function loadProfile() {
+    async function loadStore() {
       try {
-        const supabase: any = createClient();
-        const {
-          data: { user },
-          error: authError,
-        } = await supabase.auth.getUser();
+        const response = await getMerchantStores();
 
-        if (authError) throw authError;
-        if (!user) throw new Error("Silakan login kembali.");
+        if (!active) return;
 
-        const { data, error } = await supabase
-          .from("profiles")
-          .select("avatar")
-          .eq("id", user.id)
-          .maybeSingle();
+        const currentStore = response.data?.[0];
 
-        if (error) throw error;
-
-        if (active && data?.avatar) {
-          setPhotoUrl(data.avatar);
+        if (!currentStore) {
+          setMessage("Toko belum tersedia untuk akun ini.");
+          setMessageType("error");
+          return;
         }
+
+        setStore(currentStore);
+        setName(currentStore.name ?? "");
+        setDescription(currentStore.description ?? "");
+        setPhone(currentStore.phone ?? "");
+        setWhatsapp(currentStore.whatsapp ?? "");
+        setAddress(currentStore.address ?? "");
+        setPhotoUrl(currentStore.logo_url ?? "");
       } catch (error) {
-        if (active) {
-          setMessage(
-            error instanceof Error
-              ? error.message
-              : "Gagal memuat foto profil toko.",
-          );
-        }
+        if (!active) return;
+
+        setMessage(
+          error instanceof Error ? error.message : "Gagal memuat profil toko.",
+        );
+        setMessageType("error");
       } finally {
         if (active) setLoading(false);
       }
     }
 
-    void loadProfile();
+    void loadStore();
 
     return () => {
       active = false;
     };
   }, []);
 
-  const previewUrl = selectedFile
-    ? URL.createObjectURL(selectedFile)
-    : photoUrl;
-
   useEffect(() => {
-    if (!selectedFile) return;
+    if (!selectedFile) {
+      setPreviewUrl(removePhoto ? "" : photoUrl);
+      return;
+    }
 
     const objectUrl = URL.createObjectURL(selectedFile);
+    setPreviewUrl(objectUrl);
 
     return () => URL.revokeObjectURL(objectUrl);
-  }, [selectedFile]);
+  }, [selectedFile, photoUrl, removePhoto]);
 
   function handlePhotoChange(file?: File) {
     setMessage("");
@@ -90,38 +103,60 @@ export default function StorePage() {
     const allowedTypes = ["image/jpeg", "image/png", "image/webp"];
 
     if (!allowedTypes.includes(file.type)) {
+      setMessageType("error");
       setMessage("Gunakan gambar JPG, PNG, atau WEBP.");
       return;
     }
 
     if (file.size > MAX_FILE_SIZE) {
+      setMessageType("error");
       setMessage("Ukuran foto maksimal 2 MB.");
       return;
     }
 
     setSelectedFile(file);
+    setRemovePhoto(false);
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (!store) {
+      setMessageType("error");
+      setMessage("Toko tidak ditemukan. Muat ulang halaman.");
+      return;
+    }
+
+    if (!name.trim()) {
+      setMessageType("error");
+      setMessage("Nama toko wajib diisi.");
+      return;
+    }
+
     setSaving(true);
     setMessage("");
 
     try {
-      const supabase = createClient();
-
-      const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
-
-      if (authError) throw authError;
-      if (!user) throw new Error("Silakan login kembali.");
-
-      let finalPhotoUrl = photoUrl;
+      let finalLogoUrl: string | null = photoUrl || null;
 
       if (selectedFile) {
-        const extension = selectedFile.name.split(".").pop()?.toLowerCase();
+        const supabase = createClient();
+
+        const {
+          data: { user },
+          error: authError,
+        } = await supabase.auth.getUser();
+
+        if (authError) throw authError;
+        if (!user) throw new Error("Silakan login kembali.");
+
+        const extension =
+          selectedFile.name.split(".").pop()?.toLowerCase() || "jpg";
+
         const filePath = `${user.id}/${crypto.randomUUID()}.${extension}`;
 
         const { error: uploadError } = await supabase.storage
@@ -136,27 +171,38 @@ export default function StorePage() {
 
         const { data } = supabase.storage.from(BUCKET).getPublicUrl(filePath);
 
-        finalPhotoUrl = data.publicUrl;
-
-        const { error: profileError } = await supabase
-          .from("profiles")
-          .update({ avatar: finalPhotoUrl } as never)
-          .eq("id", user.id);
-
-        if (profileError) throw profileError;
-
-        setPhotoUrl(finalPhotoUrl);
-        setSelectedFile(null);
+        finalLogoUrl = data.publicUrl;
+      } else if (removePhoto) {
+        finalLogoUrl = null;
       }
 
-      setMessage(
-        "Foto profil berhasil disimpan. Nama, slug, dan deskripsi belum disimpan ke database.",
-      );
+      const response = await updateMerchantStore(store.id, {
+        name: name.trim(),
+        description: description.trim() || null,
+        phone: phone.trim() || null,
+        whatsapp: whatsapp.trim() || null,
+        address: address.trim() || null,
+        logo_url: finalLogoUrl,
+      });
+
+      const updatedStore = response.data;
+
+      setStore(updatedStore);
+      setName(updatedStore.name ?? "");
+      setDescription(updatedStore.description ?? "");
+      setPhone(updatedStore.phone ?? "");
+      setWhatsapp(updatedStore.whatsapp ?? "");
+      setAddress(updatedStore.address ?? "");
+      setPhotoUrl(updatedStore.logo_url ?? "");
+      setSelectedFile(null);
+      setRemovePhoto(false);
+
+      setMessageType("success");
+      setMessage("Profil toko berhasil disimpan.");
     } catch (error) {
+      setMessageType("error");
       setMessage(
-        error instanceof Error
-          ? error.message
-          : "Gagal menyimpan foto profil toko.",
+        error instanceof Error ? error.message : "Gagal menyimpan profil toko.",
       );
     } finally {
       setSaving(false);
@@ -180,7 +226,7 @@ export default function StorePage() {
             {previewUrl ? (
               <img
                 src={previewUrl}
-                alt="Foto toko"
+                alt="Logo toko"
                 className="h-full w-full object-cover"
               />
             ) : (
@@ -190,32 +236,43 @@ export default function StorePage() {
 
           <div className="min-w-0 flex-1">
             <p className="font-semibold">{name || "Nama Toko"}</p>
-            <p className="mt-1 text-sm text-gray-500">Foto profil toko</p>
+            <p className="mt-1 text-sm text-gray-500">Logo profil toko</p>
 
             <div className="mt-3 flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-white/5"
+                disabled={saving || loading}
+                className="inline-flex items-center gap-2 rounded-lg border border-[var(--border)] px-3 py-2 text-sm hover:bg-white/5 disabled:opacity-50"
               >
                 <ImagePlus size={16} />
                 Pilih foto
               </button>
 
-              {(photoUrl || selectedFile) && (
+              {(photoUrl || selectedFile) && !removePhoto && (
                 <button
                   type="button"
                   onClick={() => {
                     setSelectedFile(null);
-                    setPhotoUrl("");
-                    setMessage(
-                      "Foto belum dihapus dari database. Pilih foto baru untuk menggantinya.",
-                    );
+                    setRemovePhoto(true);
+                    setMessage("");
                   }}
-                  className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-300 hover:bg-red-500/10"
+                  disabled={saving}
+                  className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm text-red-300 hover:bg-red-500/10 disabled:opacity-50"
                 >
                   <Trash2 size={16} />
-                  Batalkan pilihan
+                  Hapus logo
+                </button>
+              )}
+
+              {removePhoto && (
+                <button
+                  type="button"
+                  onClick={() => setRemovePhoto(false)}
+                  disabled={saving}
+                  className="rounded-lg px-3 py-2 text-sm hover:bg-white/5"
+                >
+                  Batalkan hapus
                 </button>
               )}
             </div>
@@ -238,52 +295,89 @@ export default function StorePage() {
           Nama toko
           <input
             required
+            maxLength={120}
             value={name}
             onChange={(event) => setName(event.target.value)}
+            disabled={loading || saving}
             className={inputClass}
+            placeholder="Nama toko"
           />
         </label>
 
         <label className="mb-5 block text-sm text-gray-300">
-          Slug toko
-          <input
-            required
-            value={slug}
-            onChange={(event) =>
-              setSlug(
-                event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, "-"),
-              )
-            }
+          Deskripsi toko
+          <textarea
+            rows={4}
+            maxLength={2000}
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            disabled={loading || saving}
             className={inputClass}
+            placeholder="Jelaskan produk atau layanan toko"
           />
-          <span className="mt-2 block text-xs text-gray-500">
-            ID URL toko; harus unik.
-          </span>
+        </label>
+
+        <label className="mb-5 block text-sm text-gray-300">
+          Nomor telepon
+          <input
+            type="tel"
+            maxLength={30}
+            value={phone}
+            onChange={(event) => setPhone(event.target.value)}
+            disabled={loading || saving}
+            className={inputClass}
+            placeholder="Nomor telepon toko"
+          />
+        </label>
+
+        <label className="mb-5 block text-sm text-gray-300">
+          WhatsApp
+          <input
+            type="tel"
+            maxLength={30}
+            value={whatsapp}
+            onChange={(event) => setWhatsapp(event.target.value)}
+            disabled={loading || saving}
+            className={inputClass}
+            placeholder="Nomor WhatsApp toko"
+          />
         </label>
 
         <label className="mb-6 block text-sm text-gray-300">
-          Deskripsi
+          Alamat toko
           <textarea
-            rows={4}
-            value={description}
-            onChange={(event) => setDescription(event.target.value)}
+            rows={3}
+            maxLength={500}
+            value={address}
+            onChange={(event) => setAddress(event.target.value)}
+            disabled={loading || saving}
             className={inputClass}
+            placeholder="Alamat lengkap toko"
           />
         </label>
 
         {message && (
-          <p role="status" className="mb-4 break-words text-sm text-amber-300">
+          <p
+            role="status"
+            className={`mb-4 break-words text-sm ${
+              messageType === "success" ? "text-emerald-400" : "text-red-400"
+            }`}
+          >
             {message}
           </p>
         )}
 
         <button
-          disabled={saving || loading}
+          disabled={saving || loading || !store}
           type="submit"
           className="inline-flex items-center gap-2 rounded-xl bg-[var(--accent)] px-4 py-3 text-sm font-bold text-black disabled:cursor-not-allowed disabled:opacity-50"
         >
           {saving && <LoaderCircle size={16} className="animate-spin" />}
-          {saving ? "Menyimpan..." : "Simpan Foto Toko"}
+          {loading
+            ? "Memuat profil..."
+            : saving
+              ? "Menyimpan..."
+              : "Simpan Profil Toko"}
         </button>
       </form>
     </div>

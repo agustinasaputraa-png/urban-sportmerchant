@@ -45,6 +45,15 @@ export type MerchantMeResponse = {
   };
 };
 
+export type UpdateMerchantStoreInput = {
+  name: string;
+  description: string | null;
+  logo_url: string | null;
+  phone: string | null;
+  whatsapp: string | null;
+  address: string | null;
+};
+
 async function getAccessToken(): Promise<string> {
   const supabase = createClient();
 
@@ -64,42 +73,73 @@ async function getAccessToken(): Promise<string> {
   return session.access_token;
 }
 
-async function apiRequest<T>(path: string): Promise<T> {
+async function apiRequest<T>(
+  path: string,
+  options: {
+    method?: "GET" | "PATCH";
+    body?: unknown;
+  } = {},
+): Promise<T> {
   if (!API_URL) {
     throw new Error("NEXT_PUBLIC_API_URL belum diatur di .env.local");
   }
 
   const token = await getAccessToken();
+  const method = options.method ?? "GET";
 
   const response = await fetch(`${API_URL.replace(/\/+$/, "")}${path}`, {
-    method: "GET",
+    method,
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/json",
+      ...(options.body !== undefined
+        ? { "Content-Type": "application/json" }
+        : {}),
     },
+    ...(options.body !== undefined
+      ? { body: JSON.stringify(options.body) }
+      : {}),
     cache: "no-store",
   });
 
   if (!response.ok) {
-    const message = await response.text();
+    const responseText = await response.text();
+    let message = responseText;
+
+    try {
+      const parsed = JSON.parse(responseText);
+      if (typeof parsed.message === "string") {
+        message = parsed.message;
+      } else if (Array.isArray(parsed.message)) {
+        message = parsed.message.join(", ");
+      }
+    } catch {
+      // Respons bukan JSON; gunakan teks asli.
+    }
+
     throw new Error(`API ${response.status}: ${message}`);
   }
 
   return (await response.json()) as T;
 }
 
-/**
- * Mengambil toko milik akun merchant dari backend Proshop.
- * Backend mengembalikan { success: true, data: MerchantStore[] }.
- */
 export function getMerchantStores() {
   return apiRequest<MerchantStoresResponse>("/proshop/merchant/stores");
 }
 
-/**
- * Alias untuk kompatibilitas dengan kode lama.
- * Respons sekarang menggunakan toko Proshop, bukan profil/venue.
- */
+export function updateMerchantStore(
+  storeId: string,
+  input: UpdateMerchantStoreInput,
+) {
+  return apiRequest<{
+    success: boolean;
+    data: MerchantStore;
+  }>(`/proshop/merchant/stores/${encodeURIComponent(storeId)}`, {
+    method: "PATCH",
+    body: input,
+  });
+}
+
 export async function getMerchantProfile(): Promise<MerchantMeResponse> {
   const response = await getMerchantStores();
 
@@ -113,10 +153,6 @@ export async function getMerchantProfile(): Promise<MerchantMeResponse> {
   };
 }
 
-/**
- * Alias kompatibilitas: sebelumnya fungsi ini memanggil
- * /merchant/venues. Sekarang mengambil toko Proshop merchant.
- */
 export function getMerchantVenues() {
   return getMerchantStores();
 }

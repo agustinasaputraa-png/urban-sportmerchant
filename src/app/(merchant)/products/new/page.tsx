@@ -5,11 +5,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, ImagePlus, LoaderCircle, Save } from "lucide-react";
 import { PageHeading } from "@/components/ui";
 import { createClient } from "@/lib/supabase/client";
-import {
-  SPORT_OPTIONS,
-  discountedPrice,
-  rupiah,
-} from "@/lib/demo-products";
+import { SPORT_OPTIONS, discountedPrice, rupiah } from "@/lib/demo-products";
 
 const API_URL = (
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000"
@@ -33,6 +29,23 @@ type Category = {
   is_active?: boolean;
 };
 
+type ApiProduct = {
+  id: string;
+  store_id: string;
+  category_id: string | null;
+  name: string;
+  description: string | null;
+  sku: string | null;
+  sport: string | null;
+  brand: string | null;
+  price: number | string;
+  discount_percent: number | null;
+  stock: number;
+  image_url: string | null;
+  is_active: boolean;
+  category?: { id: string; name: string } | null;
+};
+
 async function readResponse<T>(response: Response): Promise<T> {
   const result = await response.json().catch(() => null);
 
@@ -52,6 +65,7 @@ async function readResponse<T>(response: Response): Promise<T> {
 export default function NewProductPage() {
   const [store, setStore] = useState<Store | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [editId, setEditId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -92,13 +106,13 @@ export default function NewProductPage() {
         Authorization: `Bearer ${session.access_token}`,
       };
 
-      const storesResponse = await fetch(
-        `${API_URL}/proshop/merchant/stores`,
-        {
-          headers,
-          cache: "no-store",
-        },
-      );
+      const productId = new URLSearchParams(window.location.search).get("edit");
+      setEditId(productId);
+
+      const storesResponse = await fetch(`${API_URL}/proshop/merchant/stores`, {
+        headers,
+        cache: "no-store",
+      });
 
       const storesResult = await readResponse<Store[]>(storesResponse);
       const stores = Array.isArray(storesResult) ? storesResult : [];
@@ -134,6 +148,37 @@ export default function NewProductPage() {
 
         return categoryList[0]?.id ?? "";
       });
+
+      if (productId) {
+        const productsResponse = await fetch(
+          `${API_URL}/proshop/merchant/stores/${activeStore.id}/products`,
+          {
+            headers,
+            cache: "no-store",
+          },
+        );
+
+        const productsResult =
+          await readResponse<ApiProduct[]>(productsResponse);
+        const productRows = Array.isArray(productsResult) ? productsResult : [];
+        const product = productRows.find((item) => item.id === productId);
+
+        if (!product) {
+          throw new Error("Produk tidak ditemukan atau bukan milik toko ini.");
+        }
+
+        setName(product.name ?? "");
+        setSku(product.sku ?? "");
+        setSport(product.sport || "GOLF");
+        setCategoryId(product.category_id ?? "");
+        setBrand(product.brand ?? "");
+        setPrice(String(product.price ?? ""));
+        setDiscount(String(product.discount_percent ?? 0));
+        setStock(String(product.stock ?? 0));
+        setDescription(product.description ?? "");
+        setImageUrl(product.image_url ?? "");
+        setStatus(product.is_active ? "Aktif" : "Nonaktif");
+      }
     } catch (error) {
       setMessage(
         error instanceof Error
@@ -221,7 +266,9 @@ export default function NewProductPage() {
     setMessage("");
 
     if (!store) {
-      setMessage("Data toko belum tersedia. Muat ulang halaman terlebih dahulu.");
+      setMessage(
+        "Data toko belum tersedia. Muat ulang halaman terlebih dahulu.",
+      );
       setMessageType("error");
       return;
     }
@@ -246,10 +293,7 @@ export default function NewProductPage() {
       return;
     }
 
-    if (
-      !Number.isInteger(numericStock) ||
-      numericStock < 0
-    ) {
+    if (!Number.isInteger(numericStock) || numericStock < 0) {
       setMessage("Stok harus berupa bilangan bulat nol atau lebih.");
       setMessageType("error");
       return;
@@ -306,9 +350,9 @@ export default function NewProductPage() {
       };
 
       const response = await fetch(
-        `${API_URL}/proshop/merchant/stores/${store.id}/products`,
+        `${API_URL}/proshop/merchant/stores/${store.id}/products${editId ? `/${editId}` : ""}`,
         {
-          method: "POST",
+          method: editId ? "PATCH" : "POST",
           headers: {
             Authorization: `Bearer ${session.access_token}`,
             "Content-Type": "application/json",
@@ -319,7 +363,11 @@ export default function NewProductPage() {
 
       await readResponse(response);
 
-      setMessage(`Produk "${name.trim()}" berhasil disimpan.`);
+      setMessage(
+        editId
+          ? `Produk "${name.trim()}" berhasil diperbarui.`
+          : `Produk "${name.trim()}" berhasil disimpan.`,
+      );
       setMessageType("success");
 
       window.setTimeout(() => {
@@ -350,9 +398,13 @@ export default function NewProductPage() {
       </Link>
 
       <PageHeading
-        eyebrow="Katalog / Produk baru"
-        title="Tambah Produk"
-        description="Isi data yang akan digunakan katalog Pro Shop UrbanSport. Toko ditentukan dari akun merchant yang login."
+        eyebrow={editId ? "Katalog / Edit produk" : "Katalog / Produk baru"}
+        title={editId ? "Edit Produk" : "Tambah Produk"}
+        description={
+          editId
+            ? "Perbarui informasi produk yang tersimpan di katalog Pro Shop UrbanSport."
+            : "Isi data yang akan digunakan katalog Pro Shop UrbanSport. Toko ditentukan dari akun merchant yang login."
+        }
       />
 
       {loading ? (
@@ -364,7 +416,8 @@ export default function NewProductPage() {
         <>
           {store && (
             <div className="mb-5 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 text-sm text-gray-400">
-              Toko: <span className="font-semibold text-white">{store.name}</span>
+              Toko:{" "}
+              <span className="font-semibold text-white">{store.name}</span>
             </div>
           )}
 
@@ -514,7 +567,9 @@ export default function NewProductPage() {
                   </Field>
 
                   <div className="rounded-xl border border-[var(--border)] bg-[#202020] p-3">
-                    <p className="text-xs text-gray-500">Harga setelah diskon</p>
+                    <p className="text-xs text-gray-500">
+                      Harga setelah diskon
+                    </p>
                     <p className="mt-2 text-lg font-bold text-[var(--accent)]">
                       {price !== "" && Number(price) >= 0
                         ? rupiah(
@@ -541,7 +596,9 @@ export default function NewProductPage() {
                   <span className="mb-3 rounded-xl bg-[var(--accent)]/10 p-3 text-[var(--accent)]">
                     <ImagePlus size={25} />
                   </span>
-                  <span className="text-sm font-semibold">Pilih file gambar</span>
+                  <span className="text-sm font-semibold">
+                    Pilih file gambar
+                  </span>
                   <span className="mt-2 text-xs leading-5 text-gray-500">
                     PNG, JPG, atau WEBP · Maksimal 2 MB
                   </span>
@@ -572,13 +629,15 @@ export default function NewProductPage() {
                 </Field>
 
                 <p className="mt-3 text-xs leading-5 text-gray-500">
-                  Gambar yang dipilih akan di-upload ke Supabase Storage.
-                  Jika tidak memilih file, URL gambar di atas akan digunakan.
+                  Gambar yang dipilih akan di-upload ke Supabase Storage. Jika
+                  tidak memilih file, URL gambar di atas akan digunakan.
                 </p>
               </section>
 
               <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
-                <h2 className="mb-3 font-semibold">Ringkasan untuk katalog app</h2>
+                <h2 className="mb-3 font-semibold">
+                  Ringkasan untuk katalog app
+                </h2>
 
                 <div className="space-y-3 text-sm">
                   <Summary label="Nama" value={name || "Belum diisi"} />
@@ -609,7 +668,7 @@ export default function NewProductPage() {
                 ) : (
                   <>
                     <Save size={17} />
-                    Simpan Produk
+                    {editId ? "Simpan Perubahan" : "Simpan Produk"}
                   </>
                 )}
               </button>

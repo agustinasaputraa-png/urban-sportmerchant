@@ -73,6 +73,7 @@ export default function MerchantRegisterPage() {
     }
   }
 
+
   const inputClass =
     "mt-1.5 w-full rounded-lg border border-white/10 bg-[#101619] px-3.5 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-[#14E1E6] focus:ring-2 focus:ring-[#14E1E6]/15";
   const labelClass = "block text-sm font-medium text-slate-200";

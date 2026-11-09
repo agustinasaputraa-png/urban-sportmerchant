@@ -3,30 +3,52 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { ArrowLeft, ImagePlus, LoaderCircle, Save } from "lucide-react";
-import { PageHeading } from "@/components/ui";
+
 import { createClient } from "@/lib/supabase/client";
-import { SPORT_OPTIONS, discountedPrice, rupiah } from "@/lib/demo-products";
+import { PageHeading } from "@/components/ui";
+
+// ============================================================
+// CONFIGURATION
+// ============================================================
 
 const API_URL = (
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000"
 ).replace(/\/+$/, "");
 
-const BUCKET = "merchant-store-photos";
+// Pastikan nama bucket ini sama dengan bucket Supabase Storage
+// yang sebelumnya digunakan oleh halaman produk kamu.
+const BUCKET =
+  process.env.NEXT_PUBLIC_SUPABASE_PRODUCT_BUCKET || "proshop-products";
+
 const MAX_FILE_SIZE = 2 * 1024 * 1024;
 
 const input =
-  "mt-2 w-full rounded-xl border border-[var(--border)] bg-[#202020] px-3.5 py-3 text-sm text-white outline-none placeholder:text-gray-600 focus:border-[var(--accent)]";
+  "mt-2 w-full rounded-xl border border-[var(--border)] bg-[#202020] px-4 py-3 text-sm text-white outline-none transition placeholder:text-gray-600 focus:border-[var(--accent)] disabled:opacity-50";
+
+const SPORT_OPTIONS = [
+  { value: "GOLF", label: "Golf" },
+  { value: "PADEL", label: "Padel" },
+  { value: "GYM", label: "Gym" },
+  { value: "BILLIARD", label: "Billiard" },
+];
+
+// ============================================================
+// TYPES
+// ============================================================
 
 type Store = {
   id: string;
   name: string;
+  description?: string | null;
+  logo_url?: string | null;
+  phone?: string | null;
+  whatsapp?: string | null;
+  address?: string | null;
 };
 
 type Category = {
   id: string;
   name: string;
-  store_id?: string;
-  is_active?: boolean;
 };
 
 type ApiProduct = {
@@ -36,15 +58,38 @@ type ApiProduct = {
   name: string;
   description: string | null;
   sku: string | null;
-  sport: string | null;
-  brand: string | null;
+  sport?: string | null;
+  brand?: string | null;
   price: number | string;
-  discount_percent: number | null;
+  discount_percent?: number | null;
   stock: number;
+  weight?: number | null;
+  length?: number | null;
+  width?: number | null;
+  height?: number | null;
   image_url: string | null;
   is_active: boolean;
-  category?: { id: string; name: string } | null;
+  category?: {
+    id: string;
+    name: string;
+  } | null;
 };
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+function rupiah(value: number) {
+  return new Intl.NumberFormat("id-ID", {
+    style: "currency",
+    currency: "IDR",
+    maximumFractionDigits: 0,
+  }).format(value);
+}
+
+function discountedPrice(price: number, discount: number) {
+  return price - (price * discount) / 100;
+}
 
 async function readResponse<T>(response: Response): Promise<T> {
   const result = await response.json().catch(() => null);
@@ -62,27 +107,50 @@ async function readResponse<T>(response: Response): Promise<T> {
   return (result?.data ?? result) as T;
 }
 
+// ============================================================
+// PAGE
+// ============================================================
+
 export default function NewProductPage() {
   const [store, setStore] = useState<Store | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [editId, setEditId] = useState<string | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  // Informasi produk
   const [name, setName] = useState("");
   const [sku, setSku] = useState("");
   const [sport, setSport] = useState("GOLF");
   const [categoryId, setCategoryId] = useState("");
   const [brand, setBrand] = useState("");
+  const [description, setDescription] = useState("");
+
+  // Harga dan stok
   const [price, setPrice] = useState("");
   const [discount, setDiscount] = useState("0");
   const [stock, setStock] = useState("");
-  const [description, setDescription] = useState("");
+
+  // Informasi pengiriman Biteship
+  // Berat dalam gram, dimensi dalam cm.
+  const [weight, setWeight] = useState("");
+  const [length, setLength] = useState("");
+  const [width, setWidth] = useState("");
+  const [height, setHeight] = useState("");
+
+  // Foto produk
   const [imageUrl, setImageUrl] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+
+  // Status dan notifikasi
   const [status, setStatus] = useState("Aktif");
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error">("error");
+
+  // ==========================================================
+  // LOAD STORE, CATEGORY, AND PRODUCT
+  // ==========================================================
 
   const loadFormData = useCallback(async () => {
     setLoading(true);
@@ -107,8 +175,10 @@ export default function NewProductPage() {
       };
 
       const productId = new URLSearchParams(window.location.search).get("edit");
+
       setEditId(productId);
 
+      // Ambil toko merchant
       const storesResponse = await fetch(`${API_URL}/proshop/merchant/stores`, {
         headers,
         cache: "no-store",
@@ -126,8 +196,11 @@ export default function NewProductPage() {
       const activeStore = stores[0];
       setStore(activeStore);
 
+      // Ambil kategori
       const categoriesResponse = await fetch(
-        `${API_URL}/proshop/categories?storeId=${encodeURIComponent(activeStore.id)}`,
+        `${API_URL}/proshop/categories?storeId=${encodeURIComponent(
+          activeStore.id,
+        )}`,
         {
           cache: "no-store",
         },
@@ -141,6 +214,7 @@ export default function NewProductPage() {
         : [];
 
       setCategories(categoryList);
+
       setCategoryId((current) => {
         if (current && categoryList.some((item) => item.id === current)) {
           return current;
@@ -149,6 +223,7 @@ export default function NewProductPage() {
         return categoryList[0]?.id ?? "";
       });
 
+      // Jika edit, ambil data produk lama
       if (productId) {
         const productsResponse = await fetch(
           `${API_URL}/proshop/merchant/stores/${activeStore.id}/products`,
@@ -160,7 +235,9 @@ export default function NewProductPage() {
 
         const productsResult =
           await readResponse<ApiProduct[]>(productsResponse);
+
         const productRows = Array.isArray(productsResult) ? productsResult : [];
+
         const product = productRows.find((item) => item.id === productId);
 
         if (!product) {
@@ -172,11 +249,20 @@ export default function NewProductPage() {
         setSport(product.sport || "GOLF");
         setCategoryId(product.category_id ?? "");
         setBrand(product.brand ?? "");
+
         setPrice(String(product.price ?? ""));
         setDiscount(String(product.discount_percent ?? 0));
         setStock(String(product.stock ?? 0));
+
         setDescription(product.description ?? "");
         setImageUrl(product.image_url ?? "");
+
+        // Isi ulang informasi pengiriman
+        setWeight(String(product.weight ?? ""));
+        setLength(String(product.length ?? ""));
+        setWidth(String(product.width ?? ""));
+        setHeight(String(product.height ?? ""));
+
         setStatus(product.is_active ? "Aktif" : "Nonaktif");
       }
     } catch (error) {
@@ -185,6 +271,7 @@ export default function NewProductPage() {
           ? error.message
           : "Gagal mengambil data toko dan kategori.",
       );
+
       setMessageType("error");
     } finally {
       setLoading(false);
@@ -194,6 +281,10 @@ export default function NewProductPage() {
   useEffect(() => {
     void loadFormData();
   }, [loadFormData]);
+
+  // ==========================================================
+  // IMAGE UPLOAD
+  // ==========================================================
 
   function handleFileChange(file: File | null) {
     setMessage("");
@@ -261,26 +352,25 @@ export default function NewProductPage() {
     return data.publicUrl;
   }
 
-  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    setMessage("");
+  // ==========================================================
+  // FORM VALIDATION
+  // ==========================================================
 
-    if (!store) {
-      setMessage(
-        "Data toko belum tersedia. Muat ulang halaman terlebih dahulu.",
-      );
-      setMessageType("error");
-      return;
+  function validateForm() {
+    if (!name.trim()) {
+      throw new Error("Nama produk wajib diisi.");
+    }
+
+    if (!sku.trim()) {
+      throw new Error("SKU / kode produk wajib diisi.");
     }
 
     if (!categoryId) {
-      setMessage(
+      throw new Error(
         categories.length === 0
           ? "Belum ada kategori aktif untuk toko ini. Tambahkan kategori terlebih dahulu."
           : "Silakan pilih kategori produk.",
       );
-      setMessageType("error");
-      return;
     }
 
     const numericPrice = Number(price);
@@ -288,15 +378,11 @@ export default function NewProductPage() {
     const numericDiscount = Number(discount);
 
     if (!Number.isFinite(numericPrice) || numericPrice < 0) {
-      setMessage("Harga harus berupa angka nol atau lebih.");
-      setMessageType("error");
-      return;
+      throw new Error("Harga harus berupa angka nol atau lebih.");
     }
 
     if (!Number.isInteger(numericStock) || numericStock < 0) {
-      setMessage("Stok harus berupa bilangan bulat nol atau lebih.");
-      setMessageType("error");
-      return;
+      throw new Error("Stok harus berupa bilangan bulat nol atau lebih.");
     }
 
     if (
@@ -304,7 +390,89 @@ export default function NewProductPage() {
       numericDiscount < 0 ||
       numericDiscount > 100
     ) {
-      setMessage("Diskon harus berupa bilangan bulat antara 0–100.");
+      throw new Error("Diskon harus berupa bilangan bulat antara 0–100.");
+    }
+
+    const numericWeight = Number(weight);
+    const numericLength = Number(length);
+    const numericWidth = Number(width);
+    const numericHeight = Number(height);
+
+    if (
+      !weight.trim() ||
+      !Number.isInteger(numericWeight) ||
+      numericWeight <= 0
+    ) {
+      throw new Error(
+        "Berat produk wajib diisi dalam gram dan harus lebih dari 0.",
+      );
+    }
+
+    if (
+      !length.trim() ||
+      !Number.isInteger(numericLength) ||
+      numericLength <= 0
+    ) {
+      throw new Error(
+        "Panjang produk wajib diisi dalam cm dan harus lebih dari 0.",
+      );
+    }
+
+    if (!width.trim() || !Number.isInteger(numericWidth) || numericWidth <= 0) {
+      throw new Error(
+        "Lebar produk wajib diisi dalam cm dan harus lebih dari 0.",
+      );
+    }
+
+    if (
+      !height.trim() ||
+      !Number.isInteger(numericHeight) ||
+      numericHeight <= 0
+    ) {
+      throw new Error(
+        "Tinggi produk wajib diisi dalam cm dan harus lebih dari 0.",
+      );
+    }
+
+    return {
+      numericPrice,
+      numericStock,
+      numericDiscount,
+      numericWeight,
+      numericLength,
+      numericWidth,
+      numericHeight,
+    };
+  }
+
+  // ==========================================================
+  // SUBMIT PRODUCT
+  // ==========================================================
+
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setMessage("");
+
+    if (saving) return;
+
+    if (!store) {
+      setMessage(
+        "Data toko belum tersedia. Muat ulang halaman terlebih dahulu.",
+      );
+
+      setMessageType("error");
+      return;
+    }
+
+    let validated: ReturnType<typeof validateForm>;
+
+    try {
+      validated = validateForm();
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "Periksa kembali data produk.",
+      );
+
       setMessageType("error");
       return;
     }
@@ -335,22 +503,33 @@ export default function NewProductPage() {
         );
       }
 
+      // Payload untuk NestJS
       const payload = {
         name: name.trim(),
         sku: sku.trim(),
         sport,
         category_id: categoryId,
         brand: brand.trim() || null,
-        price: numericPrice,
-        discount_percent: numericDiscount,
-        stock: numericStock,
+
+        price: validated.numericPrice,
+        discount_percent: validated.numericDiscount,
+        stock: validated.numericStock,
+
         description: description.trim() || null,
         image_url: finalImageUrl || null,
         is_active: status === "Aktif",
+
+        // Informasi pengiriman Biteship
+        weight: validated.numericWeight,
+        length: validated.numericLength,
+        width: validated.numericWidth,
+        height: validated.numericHeight,
       };
 
       const response = await fetch(
-        `${API_URL}/proshop/merchant/stores/${store.id}/products${editId ? `/${editId}` : ""}`,
+        `${API_URL}/proshop/merchant/stores/${store.id}/products${
+          editId ? `/${editId}` : ""
+        }`,
         {
           method: editId ? "PATCH" : "POST",
           headers: {
@@ -368,6 +547,7 @@ export default function NewProductPage() {
           ? `Produk "${name.trim()}" berhasil diperbarui.`
           : `Produk "${name.trim()}" berhasil disimpan.`,
       );
+
       setMessageType("success");
 
       window.setTimeout(() => {
@@ -379,14 +559,23 @@ export default function NewProductPage() {
           ? error.message
           : "Terjadi kesalahan saat menyimpan produk.",
       );
+
       setMessageType("error");
     } finally {
       setSaving(false);
     }
   }
 
+  // ==========================================================
+  // SUMMARY
+  // ==========================================================
+
   const selectedCategory =
     categories.find((item) => item.id === categoryId)?.name || "Belum dipilih";
+
+  // ==========================================================
+  // RENDER
+  // ==========================================================
 
   return (
     <div>
@@ -394,7 +583,8 @@ export default function NewProductPage() {
         href="/products"
         className="mb-5 inline-flex items-center gap-2 text-sm text-gray-400 hover:text-[var(--accent)]"
       >
-        <ArrowLeft size={16} /> Kembali ke Produk
+        <ArrowLeft size={16} />
+        Kembali ke Produk
       </Link>
 
       <PageHeading
@@ -425,7 +615,9 @@ export default function NewProductPage() {
             onSubmit={handleSubmit}
             className="grid gap-5 xl:grid-cols-[1fr_320px]"
           >
+            {/* KOLOM UTAMA */}
             <div className="space-y-5">
+              {/* INFORMASI PRODUK */}
               <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5 md:p-6">
                 <h2 className="mb-5 font-semibold">Informasi Produk</h2>
 
@@ -524,6 +716,7 @@ export default function NewProductPage() {
                 </div>
               </section>
 
+              {/* HARGA DAN STOK */}
               <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5 md:p-6">
                 <h2 className="mb-5 font-semibold">Harga & Persediaan</h2>
 
@@ -570,6 +763,7 @@ export default function NewProductPage() {
                     <p className="text-xs text-gray-500">
                       Harga setelah diskon
                     </p>
+
                     <p className="mt-2 text-lg font-bold text-[var(--accent)]">
                       {price !== "" && Number(price) >= 0
                         ? rupiah(
@@ -580,15 +774,101 @@ export default function NewProductPage() {
                           )
                         : "Rp 0"}
                     </p>
+
                     <p className="mt-1 text-xs text-gray-600">
                       Harga promo perkiraan
                     </p>
                   </div>
                 </div>
               </section>
+
+              {/* INFORMASI PENGIRIMAN */}
+              <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5 md:p-6">
+                <div className="mb-5">
+                  <h2 className="font-semibold">Informasi Pengiriman</h2>
+
+                  <p className="mt-1 text-xs leading-5 text-gray-500">
+                    Informasi ini digunakan Biteship untuk menghitung ongkos
+                    kirim produk.
+                  </p>
+                </div>
+
+                <div className="grid gap-5 md:grid-cols-2">
+                  <Field label="Berat produk (gram) *">
+                    <input
+                      required
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={weight}
+                      onChange={(e) => setWeight(e.target.value)}
+                      placeholder="Contoh: 500"
+                      className={input}
+                    />
+                  </Field>
+
+                  <Field label="Panjang (cm) *">
+                    <input
+                      required
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={length}
+                      onChange={(e) => setLength(e.target.value)}
+                      placeholder="Contoh: 20"
+                      className={input}
+                    />
+                  </Field>
+
+                  <Field label="Lebar (cm) *">
+                    <input
+                      required
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={width}
+                      onChange={(e) => setWidth(e.target.value)}
+                      placeholder="Contoh: 15"
+                      className={input}
+                    />
+                  </Field>
+
+                  <Field label="Tinggi (cm) *">
+                    <input
+                      required
+                      type="number"
+                      min="1"
+                      step="1"
+                      value={height}
+                      onChange={(e) => setHeight(e.target.value)}
+                      placeholder="Contoh: 10"
+                      className={input}
+                    />
+                  </Field>
+                </div>
+
+                <div className="mt-5 rounded-xl border border-[var(--border)] bg-[#202020] p-4">
+                  <p className="text-xs font-semibold text-gray-300">
+                    Contoh informasi paket
+                  </p>
+
+                  <p className="mt-2 text-sm text-gray-400">Berat: 500 gram</p>
+
+                  <p className="text-sm text-gray-400">
+                    Dimensi: 20 × 15 × 10 cm
+                  </p>
+
+                  <p className="mt-2 text-xs leading-5 text-gray-500">
+                    Gunakan berat dan ukuran kemasan sebenarnya setelah produk
+                    siap dikirim, bukan hanya ukuran produk tanpa kemasan.
+                  </p>
+                </div>
+              </section>
             </div>
 
+            {/* KOLOM SAMPING */}
             <div className="space-y-5">
+              {/* FOTO PRODUK */}
               <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
                 <h2 className="mb-4 font-semibold">Foto Produk</h2>
 
@@ -596,12 +876,15 @@ export default function NewProductPage() {
                   <span className="mb-3 rounded-xl bg-[var(--accent)]/10 p-3 text-[var(--accent)]">
                     <ImagePlus size={25} />
                   </span>
+
                   <span className="text-sm font-semibold">
                     Pilih file gambar
                   </span>
+
                   <span className="mt-2 text-xs leading-5 text-gray-500">
                     PNG, JPG, atau WEBP · Maksimal 2 MB
                   </span>
+
                   <input
                     type="file"
                     accept="image/png,image/jpeg,image/webp"
@@ -618,15 +901,17 @@ export default function NewProductPage() {
                   </p>
                 )}
 
-                <Field label="Atau URL gambar">
-                  <input
-                    type="url"
-                    value={imageUrl}
-                    onChange={(e) => setImageUrl(e.target.value)}
-                    placeholder="https://..."
-                    className={input}
-                  />
-                </Field>
+                <div className="mt-4">
+                  <Field label="Atau URL gambar">
+                    <input
+                      type="url"
+                      value={imageUrl}
+                      onChange={(e) => setImageUrl(e.target.value)}
+                      placeholder="https://..."
+                      className={input}
+                    />
+                  </Field>
+                </div>
 
                 <p className="mt-3 text-xs leading-5 text-gray-500">
                   Gambar yang dipilih akan di-upload ke Supabase Storage. Jika
@@ -634,6 +919,7 @@ export default function NewProductPage() {
                 </p>
               </section>
 
+              {/* RINGKASAN */}
               <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
                 <h2 className="mb-3 font-semibold">
                   Ringkasan untuk katalog app
@@ -641,6 +927,7 @@ export default function NewProductPage() {
 
                 <div className="space-y-3 text-sm">
                   <Summary label="Nama" value={name || "Belum diisi"} />
+
                   <Summary
                     label="Olahraga"
                     value={
@@ -648,13 +935,32 @@ export default function NewProductPage() {
                         ?.label || sport
                     }
                   />
+
                   <Summary label="Kategori" value={selectedCategory} />
+
                   <Summary label="Merek" value={brand || "—"} />
+
                   <Summary label="Stok" value={stock || "0"} />
+
+                  <Summary
+                    label="Berat"
+                    value={weight ? `${weight} gram` : "—"}
+                  />
+
+                  <Summary
+                    label="Dimensi"
+                    value={
+                      length && width && height
+                        ? `${length} × ${width} × ${height} cm`
+                        : "—"
+                    }
+                  />
+
                   <Summary label="Status" value={status} />
                 </div>
               </section>
 
+              {/* SIMPAN */}
               <button
                 type="submit"
                 disabled={saving || !store || categories.length === 0}
@@ -673,6 +979,7 @@ export default function NewProductPage() {
                 )}
               </button>
 
+              {/* MESSAGE */}
               {message && (
                 <div
                   role="status"
@@ -686,6 +993,7 @@ export default function NewProductPage() {
                 </div>
               )}
 
+              {/* RELOAD */}
               <button
                 type="button"
                 onClick={() => void loadFormData()}
@@ -701,6 +1009,10 @@ export default function NewProductPage() {
     </div>
   );
 }
+
+// ============================================================
+// REUSABLE COMPONENTS
+// ============================================================
 
 function Field({
   label,
@@ -721,6 +1033,7 @@ function Summary({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] pb-3 last:border-0 last:pb-0">
       <span className="text-gray-500">{label}</span>
+
       <span className="max-w-[65%] break-words text-right font-medium text-gray-200">
         {value}
       </span>

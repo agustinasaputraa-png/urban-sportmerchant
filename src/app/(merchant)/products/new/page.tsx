@@ -19,6 +19,8 @@ import {
 
 import { createClient } from "@/lib/supabase/client";
 import { PageHeading } from "@/components/ui";
+import ProductDescriptionEditor from "../components/ProductDescriptionEditor";
+
 
 const API_URL = (
   process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000"
@@ -86,6 +88,7 @@ type ApiProduct = {
   width?: number | null;
   height?: number | null;
   image_url: string | null;
+  images?: string[] | null;
   is_active: boolean;
   variants?: ApiVariant[];
 };
@@ -182,8 +185,9 @@ export default function NewProductPage() {
   const [height, setHeight] = useState("");
 
   const [imageUrl, setImageUrl] = useState("");
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [selectedFilePreview, setSelectedFilePreview] = useState<string>("");
+  const [galleryUrls, setGalleryUrls] = useState<string[]>([]);
+  const [galleryFiles, setGalleryFiles] = useState<File[]>([]);
+  const [galleryPreviews, setGalleryPreviews] = useState<string[]>([]);
 
   const [variants, setVariants] = useState<VariantForm[]>([]);
   const [selectedPreviewVariant, setSelectedPreviewVariant] = useState(0);
@@ -194,15 +198,10 @@ export default function NewProductPage() {
   const [messageType, setMessageType] = useState<"success" | "error">("error");
 
   useEffect(() => {
-    if (!selectedFile) {
-      setSelectedFilePreview("");
-      return;
-    }
-
-    const objectUrl = URL.createObjectURL(selectedFile);
-    setSelectedFilePreview(objectUrl);
-    return () => URL.revokeObjectURL(objectUrl);
-  }, [selectedFile]);
+    const objectUrls = galleryFiles.map((file) => URL.createObjectURL(file));
+    setGalleryPreviews(objectUrls);
+    return () => objectUrls.forEach((url) => URL.revokeObjectURL(url));
+  }, [galleryFiles]);
 
   const selectedCategory = useMemo(
     () => categories.find((item) => item.id === categoryId),
@@ -281,7 +280,14 @@ export default function NewProductPage() {
         setDiscount(String(product.discount_percent ?? 0));
         setStock(String(product.stock ?? 0));
         setDescription(product.description ?? "");
-        setImageUrl(product.image_url ?? "");
+        setImageUrl("");
+        setGalleryUrls(
+          Array.isArray(product.images) && product.images.length
+            ? product.images
+            : product.image_url
+              ? [product.image_url]
+              : [],
+        );
         setWeight(String(product.weight ?? ""));
         setLength(String(product.length ?? ""));
         setWidth(String(product.width ?? ""));
@@ -291,6 +297,8 @@ export default function NewProductPage() {
       } else {
         setCategoryId(categoryList[0]?.id ?? "");
         setVariants([]);
+        setGalleryUrls([]);
+        setGalleryFiles([]);
       }
       setDeletedVariantIds([]);
     } catch (error) {
@@ -351,18 +359,50 @@ export default function NewProductPage() {
     return data.publicUrl;
   }
 
-  function handleProductFile(file: File | null) {
+  async function uploadDescriptionImage(file: File): Promise<string> {
+    if (!store) throw new Error("Toko merchant belum siap.");
+    const supabase = createClient();
+    return uploadImage(supabase, file, store.id, "product-descriptions");
+  }
+
+  function handleProductFiles(fileList: FileList | null) {
     setMessage("");
-    if (!file) {
-      setSelectedFile(null);
-      return;
-    }
+    if (!fileList?.length) return;
     try {
-      validateImage(file);
-      setSelectedFile(file);
+      const incoming = Array.from(fileList);
+      incoming.forEach(validateImage);
+      if (galleryUrls.length + galleryFiles.length + incoming.length > 8) {
+        throw new Error("Maksimal 8 foto untuk setiap produk.");
+      }
+      setGalleryFiles((current) => [...current, ...incoming]);
     } catch (error) {
-      setSelectedFile(null);
       setMessage(error instanceof Error ? error.message : "File tidak valid.");
+      setMessageType("error");
+    }
+  }
+
+  function removeGalleryImage(index: number, isNewFile: boolean) {
+    if (isNewFile)
+      setGalleryFiles((current) => current.filter((_, i) => i !== index));
+    else setGalleryUrls((current) => current.filter((_, i) => i !== index));
+  }
+
+  function addGalleryUrl() {
+    const value = imageUrl.trim();
+    if (!value) return;
+    try {
+      new URL(value);
+      if (galleryUrls.length + galleryFiles.length >= 8) {
+        throw new Error("Maksimal 8 foto untuk setiap produk.");
+      }
+      setGalleryUrls((current) => [...current, value]);
+      setImageUrl("");
+    } catch (error) {
+      setMessage(
+        error instanceof Error && error.message.includes("Maksimal")
+          ? error.message
+          : "URL gambar tidak valid.",
+      );
       setMessageType("error");
     }
   }
@@ -536,196 +576,232 @@ export default function NewProductPage() {
     };
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (saving || !store) return;
-    setMessage("");
+ 
+async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  event.preventDefault();
 
-    let validated: ReturnType<typeof validateForm>;
-    try {
-      validated = validateForm();
-    } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : "Periksa kembali data produk.",
-      );
-      setMessageType("error");
-      return;
+  if (saving || !store) return;
+
+  setMessage("");
+
+  let validated: ReturnType<typeof validateForm>;
+
+  try {
+    validated = validateForm();
+  } catch (error) {
+    setMessage(
+      error instanceof Error ? error.message : "Periksa kembali data produk.",
+    );
+    setMessageType("error");
+    return;
+  }
+
+  setSaving(true);
+
+  try {
+    const supabase = createClient();
+
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession();
+
+    if (sessionError) throw sessionError;
+
+    if (!session?.access_token) {
+      throw new Error("Sesi login berakhir. Silakan login kembali.");
     }
 
-    setSaving(true);
-    try {
-      const supabase = createClient();
-      const {
-        data: { session },
-        error: sessionError,
-      } = await supabase.auth.getSession();
+    const headers = {
+      Authorization: `Bearer ${session.access_token}`,
+      "Content-Type": "application/json",
+    };
 
-      if (sessionError) throw sessionError;
-      if (!session?.access_token) {
-        throw new Error("Sesi login berakhir. Silakan login kembali.");
-      }
+    // Upload foto galeri.
+    const uploadedGalleryUrls = await Promise.all(
+      galleryFiles.map((file) =>
+        uploadImage(supabase, file, store.id, "products"),
+      ),
+    );
 
-      const headers = {
-        Authorization: `Bearer ${session.access_token}`,
-        "Content-Type": "application/json",
-      };
+    const finalGallery = [...galleryUrls, ...uploadedGalleryUrls].slice(0, 8);
 
-      let finalImageUrl = imageUrl.trim();
-      if (selectedFile) {
-        finalImageUrl = await uploadImage(
-          supabase,
-          selectedFile,
-          store.id,
-          "products",
-        );
-      }
+    const finalImageUrl = finalGallery[0] ?? null;
 
-      const productPayload = {
-        name: name.trim(),
-        sku: sku.trim(),
-        sport,
-        category_id: categoryId,
-        brand: brand.trim() || null,
-        price: validated.numericPrice,
-        discount_percent: validated.numericDiscount,
-        stock: validated.numericStock,
-        description: description.trim() || null,
-        image_url: finalImageUrl || null,
-        is_active: status === "Aktif",
-        weight: validated.numericWeight,
-        length: validated.numericLength,
-        width: validated.numericWidth,
-        height: validated.numericHeight,
-      };
+    // Ambil nilai HTML terakhir dari state editor.
+    const finalDescription = description.trim() || null;
 
-      const productResponse = await fetch(
-        `${API_URL}/proshop/merchant/stores/${store.id}/products${editId ? `/${editId}` : ""}`,
+    if (finalDescription && finalDescription.length > 50000) {
+      throw new Error("Deskripsi produk maksimal 50.000 karakter.");
+    }
+
+    const productPayload = {
+      name: name.trim(),
+      sku: sku.trim(),
+      sport,
+      category_id: categoryId,
+      brand: brand.trim() || null,
+
+      price: validated.numericPrice,
+      discount_percent: validated.numericDiscount,
+      stock: validated.numericStock,
+
+      description: finalDescription,
+
+      image_url: finalImageUrl,
+      images: finalGallery,
+
+      is_active: status === "Aktif",
+
+      weight: validated.numericWeight,
+      length: validated.numericLength,
+      width: validated.numericWidth,
+      height: validated.numericHeight,
+    };
+
+    console.log("[FRONTEND] Description:", {
+      length: finalDescription?.length ?? 0,
+      preview: finalDescription?.slice(0, 200),
+    });
+
+    // Simpan produk.
+    const productUrl =
+      `${API_URL}/proshop/merchant/stores/${store.id}/products` +
+      (editId ? `/${editId}` : "");
+
+    const productResponse = await fetch(productUrl, {
+      method: editId ? "PATCH" : "POST",
+      headers,
+      body: JSON.stringify(productPayload),
+    });
+
+    const savedProduct = await readResponse<ApiProduct>(productResponse);
+
+    console.log("[FRONTEND] Saved product:", savedProduct);
+
+    const productId = editId || savedProduct?.id;
+
+    if (!productId) {
+      throw new Error("ID produk tidak ditemukan dari response API.");
+    }
+
+    if (!editId) {
+      setEditId(productId);
+    }
+
+    // Hapus variant.
+    for (const variantId of deletedVariantIds) {
+      const response = await fetch(
+        `${API_URL}/proshop/merchant/stores/${store.id}/products/${productId}/variants/${variantId}`,
         {
-          method: editId ? "PATCH" : "POST",
+          method: "DELETE",
           headers,
-          body: JSON.stringify(productPayload),
         },
       );
 
-      const savedProduct = await readResponse<ApiProduct>(productResponse);
-      const productId = editId || savedProduct?.id;
-
-      if (!productId) {
-        throw new Error(
-          "Produk berhasil diproses, tetapi ID produk tidak ditemukan dari respons API.",
-        );
-      }
-
-      // Simpan ID agar jika penyimpanan variant gagal, merchant dapat melanjutkan lewat mode edit.
-      if (!editId) setEditId(productId);
-
-      // Hapus variant yang ditandai merchant.
-      for (const variantId of deletedVariantIds) {
-        const response = await fetch(
-          `${API_URL}/proshop/merchant/stores/${store.id}/products/${productId}/variants/${variantId}`,
-          { method: "DELETE", headers },
-        );
-        await readResponse(response);
-        setDeletedVariantIds((current) =>
-          current.filter((id) => id !== variantId),
-        );
-      }
-
-      // Sinkronisasi variant secara manual: PATCH untuk yang sudah ada, POST untuk yang baru.
-      for (let index = 0; index < variants.length; index += 1) {
-        const variant = variants[index];
-        let variantImageUrl = variant.imageUrl.trim();
-
-        if (variant.imageFile) {
-          variantImageUrl = await uploadImage(
-            supabase,
-            variant.imageFile,
-            store.id,
-            "product-variants",
-          );
-        }
-
-        const attributes = Object.fromEntries(
-          Object.entries(variant.attributes)
-            .map(([key, value]) => [key, value.trim()])
-            .filter(([, value]) => Boolean(value)),
-        );
-
-        const variantPayload = {
-          sku: variant.sku.trim(),
-          attributes,
-          price: Number(variant.price),
-          discount_percent: Number(variant.discount),
-          stock: Number(variant.stock),
-          image_url: variantImageUrl || null,
-          is_active: variant.isActive,
-        };
-
-        const variantUrl =
-          `${API_URL}/proshop/merchant/stores/${store.id}/products/${productId}/variants` +
-          (variant.id ? `/${variant.id}` : "");
-
-        const response = await fetch(variantUrl, {
-          method: variant.id ? "PATCH" : "POST",
-          headers,
-          body: JSON.stringify(variantPayload),
-        });
-
-        const savedVariant = await readResponse<ApiVariant>(response);
-
-        if (!variant.id && savedVariant?.id) {
-          setVariants((current) =>
-            current.map((item, currentIndex) =>
-              currentIndex === index
-                ? {
-                    ...item,
-                    id: savedVariant.id,
-                    imageUrl: variantImageUrl,
-                    imageFile: null,
-                  }
-                : item,
-            ),
-          );
-        } else if (variant.imageFile) {
-          setVariants((current) =>
-            current.map((item, currentIndex) =>
-              currentIndex === index
-                ? { ...item, imageUrl: variantImageUrl, imageFile: null }
-                : item,
-            ),
-          );
-        }
-      }
-
-      setDeletedVariantIds([]);
-      setSelectedFile(null);
-      setImageUrl(finalImageUrl);
-      setMessage(
-        status === "Aktif"
-          ? `Produk "${name.trim()}" dan ${variants.length} variant berhasil disimpan dan diaktifkan.`
-          : `Produk "${name.trim()}" berhasil disimpan sebagai draft bersama ${variants.length} variant.`,
-      );
-      setMessageType("success");
-
-      window.setTimeout(() => {
-        window.location.assign("/products");
-      }, 1000);
-    } catch (error) {
-      setMessage(
-        error instanceof Error
-          ? error.message
-          : "Terjadi kesalahan saat menyimpan produk dan variant.",
-      );
-      setMessageType("error");
-    } finally {
-      setSaving(false);
+      await readResponse(response);
     }
+
+    // Simpan variant.
+    for (let index = 0; index < variants.length; index++) {
+      const variant = variants[index];
+
+      let variantImageUrl = variant.imageUrl.trim();
+
+      if (variant.imageFile) {
+        variantImageUrl = await uploadImage(
+          supabase,
+          variant.imageFile,
+          store.id,
+          "product-variants",
+        );
+      }
+
+      const attributes = Object.fromEntries(
+        Object.entries(variant.attributes)
+          .map(([key, value]) => [key, value.trim()])
+          .filter(([, value]) => Boolean(value)),
+      );
+
+      const variantPayload = {
+        sku: variant.sku.trim(),
+        attributes,
+        price: Number(variant.price),
+        discount_percent: Number(variant.discount),
+        stock: Number(variant.stock),
+        image_url: variantImageUrl || null,
+        is_active: variant.isActive,
+      };
+
+      const variantUrl =
+        `${API_URL}/proshop/merchant/stores/${store.id}/products/${productId}/variants` +
+        (variant.id ? `/${variant.id}` : "");
+
+      const response = await fetch(variantUrl, {
+        method: variant.id ? "PATCH" : "POST",
+        headers,
+        body: JSON.stringify(variantPayload),
+      });
+
+      const savedVariant = await readResponse<ApiVariant>(response);
+
+      if (!variant.id && savedVariant?.id) {
+        setVariants((current) =>
+          current.map((item, currentIndex) =>
+            currentIndex === index
+              ? {
+                  ...item,
+                  id: savedVariant.id,
+                  imageUrl: variantImageUrl,
+                  imageFile: null,
+                }
+              : item,
+          ),
+        );
+      } else if (variant.imageFile) {
+        setVariants((current) =>
+          current.map((item, currentIndex) =>
+            currentIndex === index
+              ? {
+                  ...item,
+                  imageUrl: variantImageUrl,
+                  imageFile: null,
+                }
+              : item,
+          ),
+        );
+      }
+    }
+
+    setDeletedVariantIds([]);
+    setGalleryFiles([]);
+    setGalleryUrls(finalGallery);
+    setImageUrl("");
+
+    setMessage(
+      status === "Aktif"
+        ? `Produk "${name.trim()}" berhasil disimpan dan diaktifkan.`
+        : `Produk "${name.trim()}" berhasil disimpan sebagai draft.`,
+    );
+
+    setMessageType("success");
+  } catch (error) {
+    console.error("[SAVE PRODUCT ERROR]", error);
+
+    setMessage(
+      error instanceof Error ? error.message : "Gagal menyimpan produk.",
+    );
+
+    setMessageType("error");
+  } finally {
+    setSaving(false);
   }
+}
 
   const selectedCategoryName = selectedCategory?.name || "Belum dipilih";
   const previewVariant = variants[selectedPreviewVariant] ?? variants[0];
   const previewImage =
-    previewVariant?.imageUrl || selectedFilePreview || imageUrl;
+    previewVariant?.imageUrl || galleryPreviews[0] || galleryUrls[0] || "";
   const previewPrice = previewVariant?.price
     ? Number(previewVariant.price)
     : Number(price || 0);
@@ -907,17 +983,139 @@ export default function NewProductPage() {
                   </Field>
                   <div className="md:col-span-2">
                     <Field label="Deskripsi produk">
-                      <textarea
-                        maxLength={2000}
+                      <ProductDescriptionEditor
                         value={description}
-                        onChange={(e) => setDescription(e.target.value)}
-                        rows={4}
-                        placeholder="Detail bahan, ukuran, warna, spesifikasi, atau manfaat produk..."
-                        className={`${input} resize-y`}
+                        onChange={setDescription}
+                        onUploadImage={uploadDescriptionImage}
+                        disabled={saving}
                       />
                     </Field>
                   </div>
                 </div>
+              </section>
+
+              <section className="scroll-mt-32 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5 md:p-6">
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="font-semibold">Galeri Foto Produk</h2>
+                    <p className="mt-1 text-xs text-gray-500">
+                      Maksimal 8 foto. Foto pertama menjadi foto utama produk.
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-[var(--accent)]/10 px-3 py-1 text-[10px] font-semibold text-[var(--accent)]">
+                    {galleryUrls.length + galleryFiles.length}/8 foto
+                  </span>
+                </div>
+                <label className="mx-auto flex min-h-[160px] max-w-2xl cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-gray-600 bg-[#202020] p-5 text-center transition hover:border-[var(--accent)]">
+                  <span className="mb-3 rounded-xl bg-[var(--accent)]/10 p-3 text-[var(--accent)]">
+                    <ImagePlus size={23} />
+                  </span>
+                  <span className="text-sm font-semibold">
+                    Pilih beberapa foto sekaligus
+                  </span>
+                  <span className="mt-2 text-xs text-gray-500">
+                    PNG, JPG, WEBP · Maksimal 2 MB per foto
+                  </span>
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    multiple
+                    className="sr-only"
+                    onChange={(event) => {
+                      handleProductFiles(event.target.files);
+                      event.currentTarget.value = "";
+                    }}
+                    disabled={
+                      galleryUrls.length + galleryFiles.length >= 8 || saving
+                    }
+                  />
+                </label>
+                <div className="mx-auto mt-4 max-w-2xl">
+                  <Field label="Tambahkan foto melalui URL">
+                    <div className="mt-2 flex gap-2">
+                      <input
+                        type="url"
+                        value={imageUrl}
+                        onChange={(event) => setImageUrl(event.target.value)}
+                        placeholder="https://..."
+                        className="min-w-0 flex-1 rounded-xl border border-[var(--border)] bg-[#202020] px-3 py-2.5 text-sm text-white outline-none focus:border-[var(--accent)]"
+                      />
+                      <button
+                        type="button"
+                        onClick={addGalleryUrl}
+                        disabled={
+                          !imageUrl.trim() ||
+                          galleryUrls.length + galleryFiles.length >= 8
+                        }
+                        className="inline-flex items-center gap-1 rounded-xl bg-[var(--accent)] px-3 text-xs font-bold text-black disabled:opacity-40"
+                      >
+                        <Plus size={14} /> Tambah
+                      </button>
+                    </div>
+                  </Field>
+                </div>
+                {galleryUrls.length + galleryPreviews.length > 0 ? (
+                  <div className="mx-auto mt-5 grid max-w-4xl grid-cols-2 gap-3 sm:grid-cols-4">
+                    {galleryUrls.map((url, index) => (
+                      <div
+                        key={`saved-${url}-${index}`}
+                        className="group relative overflow-hidden rounded-xl bg-[#171717]"
+                      >
+                        <img
+                          src={url}
+                          alt={`Foto produk ${index + 1}`}
+                          className="aspect-square w-full object-cover"
+                        />
+                        {index === 0 && (
+                          <span className="absolute left-2 top-2 rounded-full bg-[var(--accent)] px-2 py-1 text-[9px] font-bold text-black">
+                            UTAMA
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeGalleryImage(index, false)}
+                          aria-label={`Hapus foto ${index + 1}`}
+                          className="absolute right-2 top-2 rounded-lg bg-black/75 p-2 text-white hover:bg-red-500"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    ))}
+                    {galleryPreviews.map((url, index) => (
+                      <div
+                        key={`new-${index}`}
+                        className="group relative overflow-hidden rounded-xl bg-[#171717]"
+                      >
+                        <img
+                          src={url}
+                          alt={`Foto baru ${index + 1}`}
+                          className="aspect-square w-full object-cover"
+                        />
+                        {galleryUrls.length === 0 && index === 0 && (
+                          <span className="absolute left-2 top-2 rounded-full bg-[var(--accent)] px-2 py-1 text-[9px] font-bold text-black">
+                            UTAMA
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => removeGalleryImage(index, true)}
+                          aria-label={`Hapus foto baru ${index + 1}`}
+                          className="absolute right-2 top-2 rounded-lg bg-black/75 p-2 text-white hover:bg-red-500"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                        <span className="block truncate px-2 py-1.5 text-[10px] text-gray-500">
+                          {galleryFiles[index]?.name}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-xl bg-[#202020] p-5 text-center text-xs text-gray-500">
+                    Belum ada foto. Tambahkan foto produk agar tampil sebagai
+                    slide di aplikasi.
+                  </div>
+                )}
               </section>
 
               {/* PRODUCT VARIANTS */}
@@ -1454,80 +1652,6 @@ export default function NewProductPage() {
               </section>
 
               <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
-                <h2 className="mb-4 font-semibold">Foto Produk</h2>
-                <label className="flex min-h-[175px] cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-gray-600 bg-[#202020] p-5 text-center transition hover:border-[var(--accent)]">
-                  <span className="mb-3 rounded-xl bg-[var(--accent)]/10 p-3 text-[var(--accent)]">
-                    <ImagePlus size={25} />
-                  </span>
-                  <span className="text-sm font-semibold">
-                    Pilih file gambar
-                  </span>
-                  <span className="mt-2 text-xs leading-5 text-gray-500">
-                    PNG, JPG, atau WEBP · Maksimal 2 MB
-                  </span>
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    className="sr-only"
-                    onChange={(e) =>
-                      handleProductFile(e.target.files?.[0] ?? null)
-                    }
-                  />
-                </label>
-                {selectedFile && (
-                  <p className="mt-2 break-all text-xs text-gray-400">
-                    File dipilih: {selectedFile.name}
-                  </p>
-                )}
-                <div className="mt-4">
-                  <Field label="Atau URL gambar">
-                    <input
-                      type="url"
-                      value={imageUrl}
-                      onChange={(e) => setImageUrl(e.target.value)}
-                      placeholder="https://..."
-                      className={input}
-                    />
-                  </Field>
-                </div>
-                <p className="mt-3 text-xs leading-5 text-gray-500">
-                  Gambar yang dipilih akan di-upload ke Supabase Storage. Jika
-                  tidak memilih file, URL gambar di atas akan digunakan.
-                </p>
-                {(selectedFilePreview || imageUrl) && (
-                  <div className="mt-4 rounded-xl border border-[var(--border)] bg-[#171717] p-3">
-                    <div className="mb-2 flex items-center justify-between gap-3">
-                      <p className="text-xs font-semibold text-gray-300">
-                        Preview gambar produk
-                      </p>
-                      {selectedFile && (
-                        <span className="rounded-full bg-[var(--accent)]/10 px-2 py-1 text-[10px] font-semibold text-[var(--accent)]">
-                          Gambar baru
-                        </span>
-                      )}
-                    </div>
-                    <img
-                      src={selectedFilePreview || imageUrl}
-                      alt="Preview foto produk"
-                      className="h-48 w-full rounded-lg border border-[var(--border)] object-contain bg-[#101010]"
-                    />
-                    {selectedFile && (
-                      <p className="mt-2 truncate text-xs text-gray-500">
-                        {selectedFile.name} ·{" "}
-                        {(selectedFile.size / 1024).toFixed(0)} KB
-                      </p>
-                    )}
-                  </div>
-                )}
-                {selectedFile && (
-                  <p className="mt-2 text-xs text-[var(--accent)]">
-                    Gambar akan di-upload ke Supabase Storage saat produk
-                    disimpan.
-                  </p>
-                )}
-              </section>
-
-              <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5">
                 <h2 className="mb-3 font-semibold">
                   Ringkasan untuk katalog app
                 </h2>
@@ -1565,28 +1689,6 @@ export default function NewProductPage() {
                 tidak ditampilkan sebagai produk aktif di katalog sampai
                 statusnya diubah menjadi Aktif.
               </div>
-              <button
-                type="submit"
-                disabled={saving || !store || categories.length === 0}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-[var(--accent)] px-4 py-3.5 text-sm font-bold text-black hover:bg-[#63f0f2] disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {saving ? (
-                  <>
-                    <LoaderCircle size={17} className="animate-spin" />{" "}
-                    Menyimpan Produk & Variant...
-                  </>
-                ) : (
-                  <>
-                    <Save size={17} />{" "}
-                    {editId
-                      ? "Simpan Perubahan"
-                      : status === "Aktif"
-                        ? "Simpan & Aktifkan Produk"
-                        : "Simpan sebagai Draft"}
-                  </>
-                )}
-              </button>
-
               {message && (
                 <div
                   role="status"
@@ -1603,6 +1705,30 @@ export default function NewProductPage() {
                 className="w-full rounded-xl border border-[var(--border)] px-4 py-3 text-sm text-gray-300 hover:border-[var(--accent)] disabled:opacity-50"
               >
                 Muat Ulang Toko & Kategori
+              </button>
+            </div>
+
+            <div className="xl:col-span-2 flex justify-center border-t border-[var(--border)] pt-6">
+              <button
+                type="submit"
+                disabled={saving || !store || categories.length === 0}
+                className="flex w-full max-w-md items-center justify-center gap-2 rounded-xl bg-[var(--accent)] px-6 py-4 text-sm font-bold text-black shadow-lg shadow-[var(--accent)]/10 transition hover:bg-[#63f0f2] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? (
+                  <>
+                    <LoaderCircle size={17} className="animate-spin" />{" "}
+                    Menyimpan Produk & Variant...
+                  </>
+                ) : (
+                  <>
+                    <Save size={17} />{" "}
+                    {editId
+                      ? "Simpan Perubahan"
+                      : status === "Aktif"
+                        ? "Simpan & Aktifkan Produk"
+                        : "Simpan sebagai Draft"}
+                  </>
+                )}
               </button>
             </div>
           </form>
